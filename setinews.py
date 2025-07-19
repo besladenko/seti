@@ -1,14 +1,14 @@
 """
 SetiNews – Automated City News Network for Telegram
-Version 1.1.0  (extended, full code)
+Version 1.1.0 (extended, full code)
 
-Implemented extras (spec refs 2, 3, 4, 5, 6, 7, 9, 11)
+Implemented extras (spec refs 2, 3, 4, 5, 6, 7, 9, 11)
 -------------------------------------------------------
-• ChannelSetting table (+ `min_words_for_deduplication`).
+• ChannelSetting table (+ `min_words_for_deduplication`).
 • Admin commands: /delcity, /deldonor, /setmask, /autopost, /log, /edit, /delete.
-• Published messages store `published_msg_id` → можно редактировать/удалять.
+• Published messages store `published_msg_id` → можно редактировать/удалять.
 • Periodic pull‑loop (fallback to push updates).
-• Switched logging to Loguru (rotation 10 MB).
+• Switched logging to Loguru (rotation 10 MB).
 
 To‑do: replace DummyLLM with real GigaChat API.
 """
@@ -207,85 +207,13 @@ class DonorCache:
         async with SessionLocal() as s:
             self.ids = set((await s.execute(select(DonorChannel.channel_id))).scalars())
         self.expires = datetime.utcnow() + timedelta(minutes=DONOR_CACHE_TTL_MIN)
-        logger.info(f"Donor cache refreshed – {len(self.ids)} ids")
+        logger.info(f"Donor cache refreshed – {len(self.ids)} ids")  # <-- исправлено!
 
 DONORS = DonorCache()
-
-# ---------------------------------------------------------------------------
-# 7. Core processing
-# ---------------------------------------------------------------------------
-@telethon_client.on(events.NewMessage())
-async def on_new_message(event: events.NewMessage.Event):
-    if event.chat_id is None or event.is_private:
-        return
-    await DONORS.refresh()
-    if event.chat_id not in DONORS.ids:
-        return
-
-    async with SessionLocal() as s:
-        donor = (await s.execute(select(DonorChannel).where(DonorChannel.channel_id == event.chat_id))).scalar_one_or_none()
-        if donor is None:
-            return
-        city = donor.city
-        text = event.message.message or ""
-        if donor.mask_pattern:
-            text = re.sub(donor.mask_pattern, "", text).strip()
-        if not text:
-            return
-
-        is_ad = await gigachat.detect_ads(text) or contains_ad(text)
-        processed = None
-        dup = False
-        status = "pending"
-        if is_ad:
-            status = "rejected"
-        else:
-            cleaned = clean_text(text)
-            dup = await is_duplicate(s, city, cleaned)
-            if dup:
-                status = "rejected"
-            else:
-                if not contains_danger(cleaned):
-                    cleaned = await gigachat.paraphrase(cleaned)
-                processed = f"{cleaned}\n\n{signature(city)}"
-
-        media_path: Optional[str] = None
-        if event.message.media:
-            fname = f"{donor.channel_id}_{event.id}.jpg"
-            media_path = str(MEDIA_ROOT / fname)
-            await event.message.download_media(media_path)
-
-        post = Post(
-            donor_id=donor.id,
-            city_id=city.id,
-            original_text=text,
-            processed_text=processed,
-            media_path=media_path,
-            source_link=f"https://t.me/c/{str(donor.channel_id)[4:]}/{event.id}",
-            is_ad=is_ad,
-            is_duplicate=dup,
-            status=status,
-        )
-        s.add(post)
-        await s.commit()
-        logger.info(f"Post {post.id} {status}")
-
-        if status == "pending" and city.auto_mode:
-            await publish(s, post)  # auto‑publish
-
-# ---------------------------------------------------------------------------
-# 8. Bots
-# ---------------------------------------------------------------------------
-defaults = DefaultBotProperties(parse_mode=ParseMode.HTML)
-news_bot  = Bot(token=NEWS_BOT_TOKEN, default=defaults)
-news_dp   = Dispatcher()
-
-admin_bot = Bot(token=ADMIN_BOT_TOKEN, default=defaults)
 admin_dp   = Dispatcher()
 admin_rt   = Router()
 admin_dp.include_router(admin_rt)
 
-# --- Меню-команды для админ-бота ---
 ADMIN_COMMANDS = [
     BotCommand(command="addcity",   description="Добавить городской канал"),
     BotCommand(command="delcity",   description="Удалить городской канал"),
@@ -315,7 +243,7 @@ async def publish(s: AsyncSession, post: Post) -> None:
     post.published_at = datetime.utcnow()
     post.published_msg_id = msg.message_id
     await s.commit()
-    logger.success(f"Published post {post.id} to {city.title}")
+    logger.info(f"Post {post.id} published to {city.title}")
 
 async def edit_post(s: AsyncSession, post: Post, new_text: str) -> str:
     city = await s.get(City, post.city_id)
@@ -347,7 +275,7 @@ async def delete_post(s: AsyncSession, post: Post) -> str:
         post.status = "deleted"
         await s.commit()
         logger.info(f"Deleted post {post.id}")
-        return "Пост удалён"
+        return "✅ Пост удалён"
     except Exception as e:
         logger.error(f"Delete failed: {e}")
         return f"Ошибка: {e}"
@@ -368,7 +296,6 @@ HELP_TEXT = (
     "/help — справка по командам\n"
 )
 
-# --- Админ-команды ---
 @admin_rt.message(CommandStart())
 async def cmd_start(msg: Message) -> None:
     await msg.answer("Привет! Я бот‑админ SetiNews. Напиши /help для списка команд.")
@@ -545,7 +472,7 @@ async def cmd_edit(msg: Message) -> None:
     async with SessionLocal() as s:
         post = await s.get(Post, pid)
         if not post or not post.published_msg_id:
-            await msg.answer("⛔️ Нет такого опубликованного ХУЙ поста")
+            await msg.answer("⛔️ Нет такого опубликованного поста")
             return
         res = await edit_post(s, post, new_text)
         await msg.answer(res)
@@ -616,12 +543,11 @@ async def pull_loop() -> None:
 # 10. App run
 # ---------------------------------------------------------------------------
 def _start_bot(dp: Dispatcher, bot: Bot) -> None:
-    async def _runner():
-        # await bot.delete_webhook(drop_pending_updates=True)   # закомментируй эту строку!
-        await dp.start_polling(bot, handle_signals=False)
+    import asyncio
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.run_until_complete(_runner())
+    loop.create_task(dp.start_polling(bot, handle_signals=False))
+    loop.run_forever()
 
 async def main() -> None:
     await init_db()
@@ -648,4 +574,3 @@ def cli() -> None:
 
 if __name__ == "__main__":
     cli()
-
