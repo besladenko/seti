@@ -287,18 +287,18 @@ admin_dp.include_router(admin_rt)
 
 # --- Меню-команды для админ-бота ---
 ADMIN_COMMANDS = [
-    BotCommand("addcity",   "Добавить городской канал"),
-    BotCommand("delcity",   "Удалить городской канал"),
-    BotCommand("adddonor",  "Добавить канал-источник"),
-    BotCommand("deldonor",  "Удалить канал-источник"),
-    BotCommand("setmask",   "Изменить маску донор-канала"),
-    BotCommand("autopost",  "Вкл/выкл авто-публикацию"),
-    BotCommand("pending",   "Показать ожидающие посты"),
-    BotCommand("publish",   "Опубликовать пост вручную"),
-    BotCommand("edit",      "Изменить опубликованный пост"),
-    BotCommand("delete",    "Удалить опубликованный пост"),
-    BotCommand("log",       "Показать логи"),
-    BotCommand("help",      "Справка по командам"),
+    BotCommand(command="addcity",   description="Добавить городской канал"),
+    BotCommand(command="delcity",   description="Удалить городской канал"),
+    BotCommand(command="adddonor",  description="Добавить канал-источник"),
+    BotCommand(command="deldonor",  description="Удалить канал-источник"),
+    BotCommand(command="setmask",   description="Изменить маску донор-канала"),
+    BotCommand(command="autopost",  description="Вкл/выкл авто-публикацию"),
+    BotCommand(command="pending",   description="Показать ожидающие посты"),
+    BotCommand(command="publish",   description="Опубликовать пост вручную"),
+    BotCommand(command="edit",      description="Изменить опубликованный пост"),
+    BotCommand(command="delete",    description="Удалить опубликованный пост"),
+    BotCommand(command="log",       description="Показать логи"),
+    BotCommand(command="help",      description="Справка по командам"),
 ]
 async def setup_bot_commands() -> None:
     await admin_bot.set_my_commands(ADMIN_COMMANDS, scope=BotCommandScopeDefault())
