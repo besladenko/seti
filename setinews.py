@@ -207,7 +207,7 @@ class DonorCache:
         async with SessionLocal() as s:
             self.ids = set((await s.execute(select(DonorChannel.channel_id))).scalars())
         self.expires = datetime.utcnow() + timedelta(minutes=DONOR_CACHE_TTL_MIN)
-        logger.info("Donor cache refreshed – %d ids", len(self.ids))
+        logger.info(f"Donor cache refreshed – {len(self.ids)} ids")
 
 DONORS = DonorCache()
 
@@ -268,7 +268,7 @@ async def on_new_message(event: events.NewMessage.Event):
         )
         s.add(post)
         await s.commit()
-        logger.info("Post %d %s", post.id, status)
+        logger.info(f"Post {post.id} {status}")
 
         if status == "pending" and city.auto_mode:
             await publish(s, post)  # auto‑publish
@@ -617,7 +617,7 @@ async def pull_loop() -> None:
 # ---------------------------------------------------------------------------
 def _start_bot(dp: Dispatcher, bot: Bot) -> None:
     async def _runner():
-        await bot.delete_webhook(drop_pending_updates=True)
+        # await bot.delete_webhook(drop_pending_updates=True)   # закомментируй эту строку!
         await dp.start_polling(bot, handle_signals=False)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
