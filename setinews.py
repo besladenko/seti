@@ -1,6 +1,6 @@
 """
 SetiNews – автоматизированная городская новостная сеть для Telegram
-Версия 0.4.3 — порт на aiogram 3.x
+Версия 0.4.4 — порт на aiogram 3.7+
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from threading import Thread
-from typing import List, Set, Optional, Tuple
+from typing import Set, Optional, Tuple
 
 import httpx
 import numpy as np
@@ -28,9 +28,10 @@ from sqlalchemy import (
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
-# --- aiogram 3.x ------------------------------------------------------------
+# --- aiogram 3.7+ -----------------------------------------------------------
 from aiogram import Bot, Dispatcher, Router
 from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import Command
 from aiogram.types import Message
 # ---------------------------------------------------------------------------
@@ -39,14 +40,14 @@ from aiogram.types import Message
 # 1. Конфигурация
 # ---------------------------------------------------------------------------
 load_dotenv()
-API_ID              = int(os.getenv("TG_API_ID"))
-API_HASH            = os.getenv("TG_API_HASH")
-NEWS_BOT_TOKEN      = os.getenv("NEWS_BOT_TOKEN")
-ADMIN_BOT_TOKEN     = os.getenv("ADMIN_BOT_TOKEN")
-POSTGRES_DSN        = os.getenv("POSTGRES_DSN")
+API_ID               = int(os.getenv("TG_API_ID"))
+API_HASH             = os.getenv("TG_API_HASH")
+NEWS_BOT_TOKEN       = os.getenv("NEWS_BOT_TOKEN")
+ADMIN_BOT_TOKEN      = os.getenv("ADMIN_BOT_TOKEN")
+POSTGRES_DSN         = os.getenv("POSTGRES_DSN")
 SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", "0.82"))
-MEDIA_ROOT          = Path(os.getenv("MEDIA_ROOT", "media"))
-DONOR_CACHE_TTL_MIN = int(os.getenv("DONOR_CACHE_TTL_MIN", "10"))
+MEDIA_ROOT           = Path(os.getenv("MEDIA_ROOT", "media"))
+DONOR_CACHE_TTL_MIN  = int(os.getenv("DONOR_CACHE_TTL_MIN", "10"))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -68,12 +69,12 @@ SessionLocal = sessionmaker(
 
 class City(Base):
     __tablename__ = "cities"
-    id          = Column(Integer, primary_key=True)
-    title       = Column(String, nullable=False)
-    channel_id  = Column(Integer, unique=True, nullable=False)
-    link        = Column(String)
-    auto_mode   = Column(Boolean, default=True)
-    donors      = relationship("DonorChannel", back_populates="city")
+    id         = Column(Integer, primary_key=True)
+    title      = Column(String, nullable=False)
+    channel_id = Column(Integer, unique=True, nullable=False)
+    link       = Column(String)
+    auto_mode  = Column(Boolean, default=True)
+    donors     = relationship("DonorChannel", back_populates="city")
 
 class DonorChannel(Base):
     __tablename__ = "donor_channels"
@@ -103,9 +104,9 @@ class Post(Base):
 
 class Admin(Base):
     __tablename__ = "admins"
-    tg_id     = Column(Integer, primary_key=True)
-    username  = Column(String)
-    is_super  = Column(Boolean, default=False)
+    tg_id    = Column(Integer, primary_key=True)
+    username = Column(String)
+    is_super = Column(Boolean, default=False)
 
 async def init_db() -> None:
     async with _engine.begin() as conn:
@@ -131,9 +132,9 @@ gigachat = DummyLLM()
 # ---------------------------------------------------------------------------
 # 4. Текстовые утилиты
 # ---------------------------------------------------------------------------
-LINK_RE      = re.compile(r"https?://\S+|t\.me/\S+|@\w+|#[\wА-Яа-я_]+")
-AD_PHRASES   = ["подпишись", "жми", "переходи", "смотри канал"]
-DANGER       = ["бпла", "ракетн", "тревог"]
+LINK_RE    = re.compile(r"https?://\S+|t\.me/\S+|@\w+|#[\wА-Яа-я_]+")
+AD_PHRASES = ["подпишись", "жми", "переходи", "смотри канал"]
+DANGER     = ["бпла", "ракетн", "тревог"]
 
 def clean_text(text: str) -> str:
     return LINK_RE.sub("", text).strip()
@@ -157,9 +158,11 @@ async def is_duplicate(session: AsyncSession, city_id: int, text: str) -> bool:
     return float(cosine_similarity(mat[-1], mat[:-1]).max()) >= SIMILARITY_THRESHOLD
 
 def signature(city: City) -> str:
-    if city.link:
-        return f"❤️ Подпишись на {city.title} ({city.link})"
-    return f"❤️ Подпишись на {city.title}"
+    return (
+        f"❤️ Подпишись на {city.title} ({city.link})"
+        if city.link else
+        f"❤️ Подпишись на {city.title}"
+    )
 
 # ---------------------------------------------------------------------------
 # 5. Telethon
@@ -215,20 +218,21 @@ async def on_new_message(event: events.NewMessage.Event):
     if event.chat_id not in DONORS.ids:
         return
     async with SessionLocal() as s:
-        result = await s.execute(
+        donor = (await s.execute(
             select(DonorChannel).where(DonorChannel.channel_id == event.chat_id)
-        )
-        donor = result.scalar_one_or_none()
+        )).scalar_one_or_none()
         if donor is None:
             return
         city = donor.city
         text = event.message.message or ""
         if donor.mask_pattern:
             text = text.replace(donor.mask_pattern, "").strip()
+
         is_ad = await gigachat.detect_ads(text) or contains_ad(text)
         processed: Optional[str] = None
         dup = False
         status = "pending"
+
         if is_ad:
             status = "rejected"
         else:
@@ -240,11 +244,13 @@ async def on_new_message(event: events.NewMessage.Event):
                 if not contains_danger(cleaned):
                     cleaned = await gigachat.paraphrase(cleaned)
                 processed = f"{cleaned}\n\n{signature(city)}"
+
         media_path: Optional[str] = None
         if event.message.media:
             fname = f"{donor.channel_id}_{event.id}.jpg"
             media_path = str(MEDIA_ROOT / fname)
             await event.message.download_media(media_path)
+
         post = Post(
             donor_id       = donor.id,
             city_id        = city.id,
@@ -263,10 +269,12 @@ async def on_new_message(event: events.NewMessage.Event):
 # ---------------------------------------------------------------------------
 # 8. Боты
 # ---------------------------------------------------------------------------
-news_bot = Bot(token=NEWS_BOT_TOKEN, parse_mode=ParseMode.HTML)
-news_dp  = Dispatcher()  # этот бот ничего не принимает, только публикует
+defaults = DefaultBotProperties(parse_mode=ParseMode.HTML)  # ← единая настройка
 
-admin_bot = Bot(token=ADMIN_BOT_TOKEN, parse_mode=ParseMode.HTML)
+news_bot  = Bot(token=NEWS_BOT_TOKEN,  default=defaults)
+news_dp   = Dispatcher()
+
+admin_bot = Bot(token=ADMIN_BOT_TOKEN, default=defaults)
 admin_dp  = Dispatcher()
 admin_rt  = Router()
 admin_dp.include_router(admin_rt)
@@ -283,7 +291,7 @@ async def publish(s: AsyncSession, post: Post) -> None:
     await s.commit()
 
 # ---------------------------------------------------------------------------
-# 9. Команды админ‑бота (Router)
+# 9. Команды админ‑бота
 # ---------------------------------------------------------------------------
 @admin_rt.message(Command("addcity"))
 async def cmd_addcity(msg: Message) -> None:
@@ -313,7 +321,7 @@ async def cmd_adddonor(msg: Message) -> None:
     if len(parts) < 3:
         await msg.answer("/adddonor <city_id> <@username|https://t.me/...> [mask]")
         return
-    cid = int(parts[1])
+    cid  = int(parts[1])
     link = parts[2]
     mask = parts[3] if len(parts) == 4 else None
     try:
@@ -376,9 +384,8 @@ async def donor_cache_loop() -> None:
         await asyncio.sleep(DONOR_CACHE_TTL_MIN * 60)
 
 def _start_bot(dp: Dispatcher, bot: Bot) -> None:
-    """Запускает polling в отдельном event‑loop, как поток."""
+    """Запускает polling в отдельном event‑loop (потоке)."""
     async def _runner():
-        # удалим веб‑хук, если вдруг был, и сбросим висящие апдейты
         await bot.delete_webhook(drop_pending_updates=True)
         await dp.start_polling(bot)
 
@@ -387,18 +394,13 @@ def _start_bot(dp: Dispatcher, bot: Bot) -> None:
     loop.run_until_complete(_runner())
 
 async def main() -> None:
-    # Инициализация БД и кеша доноров
     await init_db()
     await DONORS.refresh()
-
-    # Старт Telethon
     await telethon_client.start()
 
-    # Старт ботов в отдельных потоках
-    Thread(target=_start_bot, args=(news_dp, news_bot), daemon=True).start()
+    Thread(target=_start_bot, args=(news_dp, news_bot),   daemon=True).start()
     Thread(target=_start_bot, args=(admin_dp, admin_bot), daemon=True).start()
 
-    # Фоновые задачи
     await asyncio.gather(
         refresh_gigachat_token(),
         donor_cache_loop(),
