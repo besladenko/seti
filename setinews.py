@@ -545,7 +545,7 @@ async def cmd_edit(msg: Message) -> None:
     async with SessionLocal() as s:
         post = await s.get(Post, pid)
         if not post or not post.published_msg_id:
-            await msg.answer("⛔️ Нет такого опубликованного поста")
+            await msg.answer("⛔️ Нет такого опубликованного ХУЙ поста")
             return
         res = await edit_post(s, post, new_text)
         await msg.answer(res)
