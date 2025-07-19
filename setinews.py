@@ -392,10 +392,9 @@ async def cmd_pending(msg: types.Message):
         ).scalars().all()
         if not rows:
             return await msg.answer("Пусто")
-                for p in rows:
+        for p in rows:
             preview = (p.processed_text or p.original_text)[:350]
-            await msg.answer(f"ID {p.id}\n{preview}…")(f"ID {p.id}
-{preview}…")
+            await msg.answer(f"ID {p.id}\n{preview}…")
 
 
 @admin_dp.message_handler(commands=["publish"])
@@ -436,46 +435,33 @@ async def donor_cache_loop():
 
 
 # ---------------------------------------------------------------------------
-# 11. Помощники запуска
+# 11. Запуск
 # ---------------------------------------------------------------------------
 
-def _start_polling(dp: Dispatcher):
-    loop = asyncio.get_running_loop()
-    fut = loop.create_future()
-
-    def run() -> None:
-        executor.start_polling(dp, skip_updates=True)
-        loop.call_soon_threadsafe(fut.set_result, None)
-
-    return loop.run_in_executor(None, run), fut
-
-
 async def main() -> None:
+    # проверяем соединение с БД
     async with _engine.begin():
-        pass  # проверяем БД
+        pass
 
     await DONORS.refresh()
 
-    tasks, futs = zip(
-        _start_polling(news_dp),
-        _start_polling(admin_dp),
-    )
-    tasks = list(tasks)
-    futs = list(f for _, f in futs)
-    tasks.extend([
+    # aiogram 2.x имеет coroutine start_polling — запускаем его прямо в главном loop
+    tasks = [
+        asyncio.create_task(news_dp.start_polling(skip_updates=True)),
+        asyncio.create_task(admin_dp.start_polling(skip_updates=True)),
         telethon_client.start(),
         refresh_gigachat_token(),
         donor_cache_loop(),
-    ])
-    await asyncio.gather(*tasks, *futs)
+    ]
+    await asyncio.gather(*tasks)
 
 
 def cli() -> None:
     import argparse
 
-    p = argparse.ArgumentParser()
-    p.add_argument("--init-db", action="store_true")
-    args = p.parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--init-db", action="store_true")
+    args = parser.parse_args()
     if args.init_db:
         asyncio.run(init_db())
     else:
