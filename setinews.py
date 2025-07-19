@@ -347,7 +347,7 @@ async def delete_post(s: AsyncSession, post: Post) -> str:
         post.status = "deleted"
         await s.commit()
         logger.info(f"Deleted post {post.id}")
-        return "✅ Пост удалён"
+        return "Пост удалён"
     except Exception as e:
         logger.error(f"Delete failed: {e}")
         return f"Ошибка: {e}"
