@@ -37,8 +37,8 @@ load_dotenv()
 API_ID = int(os.getenv("TG_API_ID"))
 API_HASH = os.getenv("TG_API_HASH")
 NEWS_BOT_TOKEN = os.getenv("NEWS_BOT_TOKEN")
-ADMIN_BOT_TOKEN = os.getenv("ADMIN_BOT_TOKEN")
-POSTGRES_DSN = os.getenv("POSTGRES_DSN")
+ADMIN_BOT_TOKEN = os.getenv("ADMIN_BOT_TOKEN"))
+POSTGRES_DSN = os.getenv("POSTGRES_DSN"))
 SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", "0.82"))
 MEDIA_ROOT = Path(os.getenv("MEDIA_ROOT", "media"))
 DONOR_CACHE_TTL_MIN = int(os.getenv("DONOR_CACHE_TTL_MIN", "10"))
@@ -257,6 +257,7 @@ async def is_admin(uid: int) -> bool:
         adm = await s.get(Admin, uid)
         return bool(adm and adm.is_super)
 
+# Команды админ‑бота
 @admin_dp.message_handler(commands=["addcity"])
 async def cmd_addcity(msg: types.Message) -> None:
     if msg.chat.type != "private" or not await is_admin(msg.from_user.id): return
@@ -287,7 +288,7 @@ async def cmd_adddonor(msg: types.Message) -> None:
         if not city: return await msg.answer("Bad city_id")
         s.add(DonorChannel(channel_id=dcid, title=title, city_id=cid, mask_pattern=mask))
         await s.commit(); await DONORS.refresh()
-    await msg.answer(f"✅ Donor {title} added to {city title}")
+    await msg.answer(f"✅ Donor {title} added to {city.title}")
 
 @admin_dp.message_handler(commands=["pending"])
 async def cmd_pending(msg: types.Message) -> None:
@@ -326,7 +327,6 @@ async def donor_cache_loop() -> None:
 # ---------------------------------------------------------------------------
 # 10. Запуск
 # ---------------------------------------------------------------------------
-
 def _start_bot(dp: Dispatcher) -> None:
     """Запускает aiogram polling в отдельном потоке"""
     executor.start_polling(dp, skip_updates=True)
@@ -335,17 +335,12 @@ async def main() -> None:
     await init_db()
     await DONORS.refresh()
     await telethon_client.start()
-
-    # Старт ботов в потоках
     Thread(target=_start_bot, args=(news_dp,), daemon=True).start()
     Thread(target=_start_bot, args=(admin_dp,), daemon=True).start()
-
-    # Фоновые задачи
     await asyncio.gather(
         refresh_gigachat_token(),
         donor_cache_loop(),
     )
-
 
 def cli() -> None:
     import argparse
