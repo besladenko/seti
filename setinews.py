@@ -319,22 +319,22 @@ async def donor_cache_loop():
 from threading import Thread
 
 def _start_bot(dp: Dispatcher) -> None:
-    """Запускает aiogram polling в отдельном потоке с собственным loop"""
+    """Запускает aiogram polling в отдельном потоке"""
     executor.start_polling(dp, skip_updates=True)
 
 async def main() -> None:
-    # Инициализация БД и кеша доноров
+    # Инициализируем базу и кеш доноров
     await init_db()
     await DONORS.refresh()
 
     # Старт Telethon
     await telethon_client.start()
 
-    # Старт ботов в потоках
+    # Старт ботов в отдельных потоках
     Thread(target=_start_bot, args=(news_dp,), daemon=True).start()
     Thread(target=_start_bot, args=(admin_dp,), daemon=True).start()
 
-    # Фоновые задачи LLM и кеширования
+    # Фоновые задачи
     await asyncio.gather(
         refresh_gigachat_token(),
         donor_cache_loop(),
