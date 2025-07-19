@@ -304,4 +304,183 @@ async def _on_msg(event: events.NewMessage.Event):
 # 8. Боты
 # ---------------------------------------------------------------------------
 
-news_bot = Bot(NEWS_BOT
+news_bot = Bot(NEWS_BOT_TOKEN, parse_mode="HTML")
+news_dp = Dispatcher(news_bot)
+
+
+async def publish_post(session: AsyncSession, post: Post) -> None:
+    city = await session.get(City, post.city_id)
+    if not city:
+        return
+    try:
+        if post.media_path and Path(post.media_path).exists():
+            with open(post.media_path, "rb") as f:
+                await news_bot.send_photo(city.channel_id, f, caption=post.processed_text)
+        else:
+            await news_bot.send_message(city.channel_id, post.processed_text)
+        post.status = "published"
+        post.published_at = datetime.utcnow()
+        await session.commit()
+    except Exception as e:  # noqa: BLE001
+        logger.error("Publish failed: %s", e)
+
+
+# ---------------------------------------------------------------------------
+# 9. Админ‑бот
+# ---------------------------------------------------------------------------
+
+admin_bot = Bot(ADMIN_BOT_TOKEN, parse_mode="HTML")
+admin_dp = Dispatcher(admin_bot)
+
+
+async def is_admin(user_id: int) -> bool:
+    async with SessionLocal() as s:
+        adm = await s.get(Admin, user_id)
+        return bool(adm)
+
+
+@admin_dp.message_handler(commands=["addcity"])
+async def cmd_add_city(msg: types.Message):
+    if msg.chat.type != "private" or not await is_admin(msg.from_user.id):
+        return
+    args = msg.text.split(maxsplit=1)
+    if len(args) != 2:
+        return await msg.answer("Формат: /addcity <@username|https://t.me/...>")
+    link = args[1]
+    try:
+        ch_id, title, canon = await resolve_channel(link)
+    except Exception as e:  # noqa: BLE001
+        return await msg.answer(f"Ошибка: {e}")
+    async with SessionLocal() as s:
+        s.add(City(channel_id=ch_id, title=title, link=canon or link))
+        await s.commit()
+        await DONORS.refresh()
+    await msg.answer(f"✅ Город {title} добавлен")
+
+
+@admin_dp.message_handler(commands=["adddonor"])
+async def cmd_add_donor(msg: types.Message):
+    if msg.chat.type != "private" or not await is_admin(msg.from_user.id):
+        return
+    parts = msg.text.split(maxsplit=3)
+    if len(parts) < 3:
+        return await msg.answer("Формат: /adddonor <city_id> <ссылка> [mask]")
+    city_id = int(parts[1])
+    link = parts[2]
+    mask = parts[3] if len(parts) == 4 else None
+    try:
+        ch_id, title, _ = await resolve_channel(link)
+    except Exception as e:  # noqa: BLE001
+        return await msg.answer(f"Ошибка: {e}")
+    async with SessionLocal() as s:
+        city = await s.get(City, city_id)
+        if not city:
+            return await msg.answer("⛔️ неправильный city_id")
+        s.add(DonorChannel(channel_id=ch_id, title=title, city_id=city_id, mask_pattern=mask))
+        await s.commit()
+        await DONORS.refresh()
+    await msg.answer("✅ Донор добавлен")
+
+
+@admin_dp.message_handler(commands=["pending"])
+async def cmd_pending(msg: types.Message):
+    if msg.chat.type != "private" or not await is_admin(msg.from_user.id):
+        return
+    async with SessionLocal() as s:
+        rows: List[Post] = (
+            await s.execute(select(Post).where(Post.status == "pending").limit(15))
+        ).scalars().all()
+        if not rows:
+            return await msg.answer("Пусто")
+        for p in rows:
+            preview = (p.processed_text or p.original_text)[:350]
+            await msg.answer(f"ID {p.id}
+{preview}…")
+
+
+@admin_dp.message_handler(commands=["publish"])
+async def cmd_publish(msg: types.Message):
+    if msg.chat.type != "private" or not await is_admin(msg.from_user.id):
+        return
+    parts = msg.text.split()
+    if len(parts) != 2:
+        return
+    pid = int(parts[1])
+    async with SessionLocal() as s:
+        p = await s.get(Post, pid)
+        if not p or p.status != "pending":
+            return await msg.answer("⛔️ Не найдено")
+        await publish_post(s, p)
+        await msg.answer("✅ Опубликовано")
+
+
+# ---------------------------------------------------------------------------
+# 10. Планировщики
+# ---------------------------------------------------------------------------
+
+async def refresh_gigachat_token():
+    while True:
+        gigachat._tok = None
+        try:
+            await gigachat._get_token()
+            logger.info("GigaChat token refreshed")
+        except Exception:
+            logger.warning("GigaChat token refresh failed")
+        await asyncio.sleep(3600)
+
+
+async def donor_cache_loop():
+    while True:
+        await DONORS.refresh()
+        await asyncio.sleep(DONOR_CACHE_TTL_MIN * 60)
+
+
+# ---------------------------------------------------------------------------
+# 11. Помощники запуска
+# ---------------------------------------------------------------------------
+
+def _start_polling(dp: Dispatcher):
+    loop = asyncio.get_running_loop()
+    fut = loop.create_future()
+
+    def run() -> None:
+        executor.start_polling(dp, skip_updates=True)
+        loop.call_soon_threadsafe(fut.set_result, None)
+
+    return loop.run_in_executor(None, run), fut
+
+
+async def main() -> None:
+    async with _engine.begin():
+        pass  # проверяем БД
+
+    await DONORS.refresh()
+
+    tasks, futs = zip(
+        _start_polling(news_dp),
+        _start_polling(admin_dp),
+    )
+    tasks = list(tasks)
+    futs = list(f for _, f in futs)
+    tasks.extend([
+        telethon_client.start(),
+        refresh_gigachat_token(),
+        donor_cache_loop(),
+    ])
+    await asyncio.gather(*tasks, *futs)
+
+
+def cli() -> None:
+    import argparse
+
+    p = argparse.ArgumentParser()
+    p.add_argument("--init-db", action="store_true")
+    args = p.parse_args()
+    if args.init_db:
+        asyncio.run(init_db())
+    else:
+        asyncio.run(main())
+
+
+if __name__ == "__main__":
+    cli()
