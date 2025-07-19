@@ -392,9 +392,9 @@ async def cmd_pending(msg: types.Message):
         ).scalars().all()
         if not rows:
             return await msg.answer("Пусто")
-        for p in rows:
+                for p in rows:
             preview = (p.processed_text or p.original_text)[:350]
-            await msg.answer(f"ID {p.id}
+            await msg.answer(f"ID {p.id}\n{preview}…")(f"ID {p.id}
 {preview}…")
 
 
