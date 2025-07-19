@@ -310,7 +310,7 @@ async def refresh_gigachat_token():
 async def donor_cache_loop():
     while True:
         await DONORS.refresh()
-        await asyncio.sleep(DONOR_CACHE_TTL_MIN*60)
+        await asyncio.sleep(DONOR_CACHE_TTL_MIN * 60)
 
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
