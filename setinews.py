@@ -1,6 +1,6 @@
 """
 SetiNews – автоматизированная городская новостная сеть для Telegram
-Версия 0.4.4 — порт на aiogram 3.7+
+Версия 0.4.5 — меню‑команды и /help
 """
 from __future__ import annotations
 
@@ -32,8 +32,8 @@ from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 from aiogram import Bot, Dispatcher, Router
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
-from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.filters import Command, CommandStart
+from aiogram.types import Message, BotCommand, BotCommandScopeDefault
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
@@ -269,7 +269,7 @@ async def on_new_message(event: events.NewMessage.Event):
 # ---------------------------------------------------------------------------
 # 8. Боты
 # ---------------------------------------------------------------------------
-defaults = DefaultBotProperties(parse_mode=ParseMode.HTML)  # ← единая настройка
+defaults = DefaultBotProperties(parse_mode=ParseMode.HTML)
 
 news_bot  = Bot(token=NEWS_BOT_TOKEN,  default=defaults)
 news_dp   = Dispatcher()
@@ -278,6 +278,21 @@ admin_bot = Bot(token=ADMIN_BOT_TOKEN, default=defaults)
 admin_dp  = Dispatcher()
 admin_rt  = Router()
 admin_dp.include_router(admin_rt)
+
+# ---------- 8.1  Меню‑команды  ------------------------------------------------
+ADMIN_COMMANDS = [
+    BotCommand("addcity",  "Добавить новый город"),
+    BotCommand("adddonor", "Привязать донор‑канал к городу"),
+    BotCommand("pending",  "Список ожидающих постов"),
+    BotCommand("publish",  "Опубликовать пост по ID"),
+    BotCommand("help",     "Справка по командам"),
+]
+NEWS_COMMANDS: list[BotCommand] = []  # новостной бот ничего не принимает
+
+async def setup_bot_commands() -> None:
+    await admin_bot.set_my_commands(ADMIN_COMMANDS, scope=BotCommandScopeDefault())
+    await news_bot.set_my_commands(NEWS_COMMANDS,  scope=BotCommandScopeDefault())
+# ---------------------------------------------------------------------------
 
 async def publish(s: AsyncSession, post: Post) -> None:
     city = await s.get(City, post.city_id)
@@ -293,6 +308,22 @@ async def publish(s: AsyncSession, post: Post) -> None:
 # ---------------------------------------------------------------------------
 # 9. Команды админ‑бота
 # ---------------------------------------------------------------------------
+HELP_TEXT = (
+    "<b>Команды SetiNews Admin Bot</b>\n\n"
+    "/addcity &lt;@username&gt; — зарегистрировать городской канал\n"
+    "/adddonor &lt;city_id&gt; &lt;@donor&gt; [маска] — добавить донор‑канал\n"
+    "/pending — показать до 10 постов со статусом pending\n"
+    "/publish &lt;post_id&gt; — вручную опубликовать пост\n"
+)
+
+@admin_rt.message(CommandStart())
+async def cmd_start(msg: Message) -> None:
+    await msg.answer("Привет! Я бот‑админ SetiNews. Напиши /help для списка команд.")
+
+@admin_rt.message(Command("help"))
+async def cmd_help(msg: Message) -> None:
+    await msg.answer(HELP_TEXT)
+
 @admin_rt.message(Command("addcity"))
 async def cmd_addcity(msg: Message) -> None:
     if msg.chat.type != "private" or not await is_admin(msg.from_user.id):
@@ -370,12 +401,16 @@ async def cmd_publish(msg: Message) -> None:
         await publish(s, p)
         await msg.answer("✅ Published")
 
+# catch‑all (чтобы не спамили в лог)
+@admin_rt.message()
+async def ignore_others(msg: Message) -> None:
+    pass
+
 # ---------------------------------------------------------------------------
 # 10. Планировщики и запуск
 # ---------------------------------------------------------------------------
 async def refresh_gigachat_token() -> None:
     while True:
-        # TODO: обновлять токен при работе с реальным LLM
         await asyncio.sleep(3600)
 
 async def donor_cache_loop() -> None:
@@ -397,6 +432,7 @@ async def main() -> None:
     await init_db()
     await DONORS.refresh()
     await telethon_client.start()
+    await setup_bot_commands()          # ← меню‑команды
 
     Thread(target=_start_bot, args=(news_dp, news_bot),   daemon=True).start()
     Thread(target=_start_bot, args=(admin_dp, admin_bot), daemon=True).start()
