@@ -387,7 +387,7 @@ def _start_bot(dp: Dispatcher, bot: Bot) -> None:
     """Запускает polling в отдельном event‑loop (потоке)."""
     async def _runner():
         await bot.delete_webhook(drop_pending_updates=True)
-        await dp.start_polling(bot)
+        await dp.start_polling(bot, handle_signals=False)
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
