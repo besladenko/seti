@@ -313,27 +313,43 @@ async def donor_cache_loop():
         await asyncio.sleep(DONOR_CACHE_TTL_MIN*60)
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # 10. Запуск
 # ---------------------------------------------------------------------------
+from threading import Thread
+
+def _start_bot(dp: Dispatcher) -> None:
+    """Запускает aiogram polling в отдельном потоке с собственным loop"""
+    executor.start_polling(dp, skip_updates=True)
+
 async def main() -> None:
+    # Инициализация БД и кеша доноров
     await init_db()
     await DONORS.refresh()
+
+    # Старт Telethon
     await telethon_client.start()
-    tasks=[
-        asyncio.create_task(asyncio.to_thread(executor.start_polling, news_dp, skip_updates=True)),
-        asyncio.create_task(asyncio.to_thread(executor.start_polling, admin_dp, skip_updates=True)),
-        asyncio.create_task(refresh_gigachat_token()),
-        asyncio.create_task(donor_cache_loop()),
-    ]
-    await asyncio.gather(*tasks)
+
+    # Старт ботов в потоках
+    Thread(target=_start_bot, args=(news_dp,), daemon=True).start()
+    Thread(target=_start_bot, args=(admin_dp,), daemon=True).start()
+
+    # Фоновые задачи LLM и кеширования
+    await asyncio.gather(
+        refresh_gigachat_token(),
+        donor_cache_loop(),
+    )
+
 
 def cli() -> None:
     import argparse
-    parser=argparse.ArgumentParser()
-    parser.add_argument("--init-db",action="store_true")
-    args=parser.parse_args()
-    if args.init_db: asyncio.run(init_db())
-    else: asyncio.run(main())
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--init-db", action="store_true")
+    args = parser.parse_args()
+    if args.init_db:
+        asyncio.run(init_db())
+    else:
+        asyncio.run(main())
 
-if __name__=="__main__":
+if __name__ == "__main__":
     cli()
