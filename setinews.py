@@ -302,8 +302,7 @@ async def cmd_pending(msg: types.Message) -> None:
             return await msg.answer("No pending posts")
         for p in rows:
             preview = (p.processed_text or p.original_text)[:250]
-            await msg.answer(f"ID {p.id}
-{preview}...")
+            await msg.answer(f"ID {p.id}\n{preview}...")
 
 @admin_dp.message_handler(commands=["publish"])
 async def cmd_publish(msg: types.Message) -> None:
