@@ -445,8 +445,7 @@ async def main() -> None:
 
     await DONORS.refresh()
 
-    # aiogram 2.x имеет coroutine start_polling — запускаем его прямо в главном loop
-        # aiogram's executor.start_polling is a blocking call → запускаем его в thread via asyncio.to_thread
+        # запускаем aiogram polling в отдельных потоках, остальное — в основном loop
     tasks = [
         asyncio.create_task(asyncio.to_thread(executor.start_polling, news_dp, skip_updates=True)),
         asyncio.create_task(asyncio.to_thread(executor.start_polling, admin_dp, skip_updates=True)),
