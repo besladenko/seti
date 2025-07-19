@@ -1,6 +1,6 @@
-"""SetiNews – Автоматизированная городская новостная сеть для Telegram (версия 0.4.2)
+"""SetiNews – Автоматизированная городская новостная сеть для Telegram (версия 0.4.2)
 ================================================================================
-Полностью рабочий скрипт: парсер Telethon, боты aiogram 2.x, PostgreSQL + SQLAlchemy,
+Полностью рабочий скрипт: парсер Telethon, боты aiogram 2.x, PostgreSQL + SQLAlchemy,
 минимальные stub’ы для LLM, корректный polling через threading, асинхронный запуск.
 """
 from __future__ import annotations
@@ -107,6 +107,11 @@ async def init_db() -> None:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("DB schema (re)created ✅")
 
+async def is_admin(tg_id: int) -> bool:
+    async with SessionLocal() as s:
+        row = await s.execute(select(Admin.tg_id).where(Admin.tg_id == tg_id))
+        return row.scalar() is not None
+
 # ---------------------------------------------------------------------------
 # 3. Stub LLM
 # ---------------------------------------------------------------------------
@@ -192,8 +197,12 @@ async def on_new_message(event: events.NewMessage.Event):
     await DONORS.refresh()
     if event.chat_id not in DONORS.ids: return
     async with SessionLocal() as s:
-        donor = await s.get(DonorChannel, event.chat_id, column=DonorChannel.channel_id)
-        if not donor: return
+        result = await s.execute(
+            select(DonorChannel).where(DonorChannel.channel_id == event.chat_id)
+        )
+        donor = result.scalar_one_or_none()
+        if donor is None:
+            return
         city = donor.city
         text = event.message.message or ""
         if donor.mask_pattern:
@@ -305,13 +314,6 @@ async def cmd_pending(msg: types.Message) -> None:
             await msg.answer(f"ID {p.id}\n{preview}...")
 
 @admin_dp.message_handler(commands=["publish"])
-"No pending posts")
-        for p in rows:
-            preview = (p.processed_text or p.original_text)[:250]
-                    await msg.answer(f"ID {p.id}
-{preview}..." )
-
-@admin_dp.message_handler(commands=["publish"])
 async def cmd_publish(msg: types.Message) -> None:
     if msg.chat.type != "private" or not await is_admin(msg.from_user.id):
         return
@@ -343,7 +345,7 @@ def _start_bot(dp: Dispatcher) -> None:
     """Создаёт отдельный event‑loop в потоке и запускает polling."""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    executor.start_polling(dp, skip_updates=True, loop=loop)(dp, skip_updates=True)
+    executor.start_polling(dp, skip_updates=True, loop=loop)
 
 async def main() -> None:
     # Инициализация БД и кеша доноров
