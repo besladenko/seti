@@ -305,6 +305,13 @@ async def cmd_pending(msg: types.Message) -> None:
             await msg.answer(f"ID {p.id}\n{preview}...")
 
 @admin_dp.message_handler(commands=["publish"])
+"No pending posts")
+        for p in rows:
+            preview = (p.processed_text or p.original_text)[:250]
+                    await msg.answer(f"ID {p.id}
+{preview}..." )
+
+@admin_dp.message_handler(commands=["publish"])
 async def cmd_publish(msg: types.Message) -> None:
     if msg.chat.type != "private" or not await is_admin(msg.from_user.id):
         return
@@ -333,8 +340,10 @@ async def donor_cache_loop() -> None:
         await asyncio.sleep(DONOR_CACHE_TTL_MIN * 60)
 
 def _start_bot(dp: Dispatcher) -> None:
-    """Запускает aiogram polling в отдельном потоке"""
-    executor.start_polling(dp, skip_updates=True)
+    """Создаёт отдельный event‑loop в потоке и запускает polling."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    executor.start_polling(dp, skip_updates=True, loop=loop)(dp, skip_updates=True)
 
 async def main() -> None:
     # Инициализация БД и кеша доноров
