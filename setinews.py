@@ -398,7 +398,7 @@ async def cmd_pending(msg: types.Message):
 {preview}…")
 
 
-@admin_dp.message_handler(commands=["publish"])(commands=["publish"])
+@admin_dp.message_handler(commands=["publish"])
 async def cmd_publish(msg: types.Message):
     if msg.chat.type != "private" or not await is_admin(msg.from_user.id):
         return
