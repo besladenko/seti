@@ -1,8 +1,7 @@
-"""SetiNews – Автоматизированная городская новостная сеть для Telegram (версия 0.4)
+"""SetiNews – Автоматизированная городская новостная сеть для Telegram (версия 0.4.1)
 ================================================================================
-
 Полностью рабочий скрипт: парсер Telethon, боты aiogram 2.x, PostgreSQL + SQLAlchemy,
-минимальные stub’ы для LLM, корректный polling и асинхронный запуск.
+минимальные stub’ы для LLM, корректный polling через threading, асинхронный запуск.
 """
 from __future__ import annotations
 
@@ -12,6 +11,7 @@ import os
 import re
 from datetime import datetime, timedelta
 from pathlib import Path
+from threading import Thread
 from typing import List, Set, Optional, Tuple
 
 import httpx
@@ -108,7 +108,7 @@ async def init_db() -> None:
     logger.info("DB schema (re)created ✅")
 
 # ---------------------------------------------------------------------------
-# 3. GigaChat/stub LLM
+# 3. Stub LLM
 # ---------------------------------------------------------------------------
 class DummyLLM:
     async def detect_ads(self, text: str) -> bool:
@@ -156,7 +156,7 @@ def signature(city: City) -> str:
 # ---------------------------------------------------------------------------
 telethon_client = TelegramClient("setinews_parser", API_ID, API_HASH)
 
-async def resolve_channel(link: str) -> Tuple[int,str,Optional[str]]:
+async def resolve_channel(link: str) -> Tuple[int, str, Optional[str]]:
     ent = await telethon_client.get_entity(link)
     chan_id = int(ent.id)
     title = getattr(ent, "title", None) or getattr(ent, "first_name", str(chan_id))
@@ -170,10 +170,10 @@ async def resolve_channel(link: str) -> Tuple[int,str,Optional[str]]:
     return chan_id, title, canon
 
 # ---------------------------------------------------------------------------
-# 6. Donor cache
+# 6. Кеш доноров
 # ---------------------------------------------------------------------------
 class DonorCache:
-    def __init__(self): self.ids = set(); self.expires = datetime.min
+    def __init__(self): self.ids: Set[int] = set(); self.expires = datetime.min
     async def refresh(self):
         if datetime.utcnow() < self.expires: return
         async with SessionLocal() as s:
@@ -188,7 +188,7 @@ DONORS = DonorCache()
 # ---------------------------------------------------------------------------
 @telethon_client.on(events.NewMessage())
 async def handler(event: events.NewMessage.Event):
-    if not event.chat_id or event.is_private: return
+    if event.chat_id is None or event.is_private: return
     await DONORS.refresh()
     if event.chat_id not in DONORS.ids: return
     async with SessionLocal() as s:
@@ -199,138 +199,144 @@ async def handler(event: events.NewMessage.Event):
         if donor.mask_pattern:
             text = text.replace(donor.mask_pattern, "").strip()
         is_ad = await gigachat.detect_ads(text) or contains_ad(text)
-        processed = None; dup=False; status = "pending"
-        if is_ad: status = "rejected"
+        processed = None; dup = False; status = "pending"
+        if is_ad:
+            status = "rejected"
         else:
             cleaned = clean_text(text)
             dup = await is_duplicate(s, city.id, cleaned)
-            if dup: status = "rejected"
+            if dup:
+                status = "rejected"
             else:
-                if not contains_danger(cleaned): cleaned = await gigachat.paraphrase(cleaned)
+                if not contains_danger(cleaned):
+                    cleaned = await gigachat.paraphrase(cleaned)
                 processed = f"{cleaned}\n\n{signature(city)}"
-        media_path=None
+        media_path: Optional[str] = None
         if event.message.media:
-            fname=f"{donor.channel_id}_{event.id}.jpg"
-            media_path=str(MEDIA_ROOT/fname)
+            fname = f"{donor.channel_id}_{event.id}.jpg"
+            media_path = str(MEDIA_ROOT / fname)
             await event.message.download_media(media_path)
-        post=Post(
-            donor_id=donor.id, city_id=city.id,
-            original_text=text, processed_text=processed,
+        post = Post(
+            donor_id=donor.id,
+            city_id=city.id,
+            original_text=text,
+            processed_text=processed,
             media_path=media_path,
             source_link=f"https://t.me/c/{str(donor.channel_id)[4:]}/{event.id}",
-            is_ad=is_ad, is_duplicate=dup, status=status
+            is_ad=is_ad,
+            is_duplicate=dup,
+            status=status
         )
         s.add(post); await s.commit()
         logger.info("Post %d %s", post.id, status)
-        if status=="pending" and city.auto_mode:
+        if status == "pending" and city.auto_mode:
             await publish(s, post)
 
 # ---------------------------------------------------------------------------
-# 8. Bots
+# 8. Боты
 # ---------------------------------------------------------------------------
 news_bot = Bot(NEWS_BOT_TOKEN, parse_mode="HTML")
-news_dp  = Dispatcher(news_bot)
+news_dp = Dispatcher(news_bot)
 
-async def publish(s: AsyncSession, post: Post):
+async def publish(s: AsyncSession, post: Post) -> None:
     city = await s.get(City, post.city_id)
     if post.media_path and Path(post.media_path).exists():
         with open(post.media_path, "rb") as f:
             await news_bot.send_photo(city.channel_id, f, caption=post.processed_text)
     else:
         await news_bot.send_message(city.channel_id, post.processed_text)
-    post.status="published"; post.published_at=datetime.utcnow()
+    post.status = "published"
+    post.published_at = datetime.utcnow()
     await s.commit()
 
 admin_bot = Bot(ADMIN_BOT_TOKEN, parse_mode="HTML")
 admin_dp = Dispatcher(admin_bot)
 
-async def is_admin(uid: int)->bool:
+async def is_admin(uid: int) -> bool:
     async with SessionLocal() as s:
-        adm=await s.get(Admin, uid)
+        adm = await s.get(Admin, uid)
         return bool(adm and adm.is_super)
 
 @admin_dp.message_handler(commands=["addcity"])
-async def cmd_addcity(msg: types.Message):
-    if msg.chat.type!="private" or not await is_admin(msg.from_user.id): return
-    parts=msg.text.split(maxsplit=1)
-    if len(parts)!=2: return await msg.answer("/addcity <link>")
-    link=parts[1]
-    try: cid,title,canon=await resolve_channel(link)
-    except Exception as e: return await msg.answer(f"Error: {e}")
+async def cmd_addcity(msg: types.Message) -> None:
+    if msg.chat.type != "private" or not await is_admin(msg.from_user.id): return
+    parts = msg.text.split(maxsplit=1)
+    if len(parts) != 2: return await msg.answer("/addcity <link>")
+    link = parts[1]
+    try:
+        cid, title, canon = await resolve_channel(link)
+    except Exception as e:
+        return await msg.answer(f"Error: {e}")
     async with SessionLocal() as s:
-        s.add(City(channel_id=cid,title=title,link=canon))
+        s.add(City(channel_id=cid, title=title, link=canon))
         await s.commit(); await DONORS.refresh()
     await msg.answer(f"✅ City added: {title} ({cid})")
 
 @admin_dp.message_handler(commands=["adddonor"])
-async def cmd_adddonor(msg: types.Message):
-    if msg.chat.type!="private" or not await is_admin(msg.from_user.id): return
-    parts=msg.text.split(maxsplit=3)
-    if len(parts)<3: return await msg.answer("/adddonor <city_id> <link> [mask]")
-    cid=int(parts[1]); link=parts[2]; mask=parts[3] if len(parts)==4 else None
-    try: dcid,title,_=await resolve_channel(link)
-    except Exception as e: return await msg.answer(f"Error: {e}")
+async def cmd_adddonor(msg: types.Message) -> None:
+    if msg.chat.type != "private" or not await is_admin(msg.from_user.id): return
+    parts = msg.text.split(maxsplit=3)
+    if len(parts) < 3: return await msg.answer("/adddonor <city_id> <link> [mask]")
+    cid = int(parts[1]); link = parts[2]; mask = parts[3] if len(parts) == 4 else None
+    try:
+        dcid, title, _ = await resolve_channel(link)
+    except Exception as e:
+        return await msg.answer(f"Error: {e}")
     async with SessionLocal() as s:
-        city=await s.get(City, cid)
+        city = await s.get(City, cid)
         if not city: return await msg.answer("Bad city_id")
-        s.add(DonorChannel(channel_id=dcid,title=title,city_id=cid,mask_pattern=mask))
+        s.add(DonorChannel(channel_id=dcid, title=title, city_id=cid, mask_pattern=mask))
         await s.commit(); await DONORS.refresh()
-    await msg.answer(f"✅ Donor {title} added to {city.title}")
+    await msg.answer(f"✅ Donor {title} added to {city title}")
 
 @admin_dp.message_handler(commands=["pending"])
-async def cmd_pending(msg: types.Message):
-    if msg.chat.type!="private" or not await is_admin(msg.from_user.id): return
+async def cmd_pending(msg: types.Message) -> None:
+    if msg.chat.type != "private" or not await is_admin(msg.from_user.id): return
     async with SessionLocal() as s:
-        rows=(await s.execute(select(Post).where(Post.status=="pending").limit(10))).scalars().all()
+        rows = (await s.execute(select(Post).where(Post.status == "pending").limit(10))).scalars().all()
         if not rows: return await msg.answer("No pending posts")
         for p in rows:
-            preview=(p.processed_text or p.original_text)[:250]
+            preview = (p.processed_text or p.original_text)[:250]
             await msg.answer(f"ID {p.id}\n{preview}")
 
 @admin_dp.message_handler(commands=["publish"])
-async def cmd_publish(msg: types.Message):
-    if msg.chat.type!="private" or not await is_admin(msg.from_user.id): return
-    parts=msg.text.split();
-    if len(parts)!=2: return
-    pid=int(parts[1])
+async def cmd_publish(msg: types.Message) -> None:
+    if msg.chat.type != "private" or not await is_admin(msg.from_user.id): return
+    parts = msg.text.split()
+    if len(parts) != 2: return
+    pid = int(parts[1])
     async with SessionLocal() as s:
-        p=await s.get(Post,pid)
-        if not p or p.status!="pending": return await msg.answer("Bad post id")
-        await publish(s,p)
+        p = await s.get(Post, pid)
+        if not p or p.status != "pending": return await msg.answer("Bad post id")
+        await publish(s, p)
         await msg.answer("✅ Published")
 
 # ---------------------------------------------------------------------------
 # 9. Планировщики
 # ---------------------------------------------------------------------------
-async def refresh_gigachat_token():
+async def refresh_gigachat_token() -> None:
     while True:
-        # stub
         await asyncio.sleep(3600)
 
-async def donor_cache_loop():
+async def donor_cache_loop() -> None:
     while True:
         await DONORS.refresh()
         await asyncio.sleep(DONOR_CACHE_TTL_MIN * 60)
 
 # ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
 # 10. Запуск
 # ---------------------------------------------------------------------------
-from threading import Thread
 
 def _start_bot(dp: Dispatcher) -> None:
     """Запускает aiogram polling в отдельном потоке"""
     executor.start_polling(dp, skip_updates=True)
 
 async def main() -> None:
-    # Инициализируем базу и кеш доноров
     await init_db()
     await DONORS.refresh()
-
-    # Старт Telethon
     await telethon_client.start()
 
-    # Старт ботов в отдельных потоках
+    # Старт ботов в потоках
     Thread(target=_start_bot, args=(news_dp,), daemon=True).start()
     Thread(target=_start_bot, args=(admin_dp,), daemon=True).start()
 
