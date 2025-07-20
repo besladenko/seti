@@ -211,8 +211,8 @@ class DonorCache:
 
 DONORS = DonorCache()
 admin_dp   = Dispatcher()
-admin_rt   = Router()
-admin_dp.include_router(admin_rt)
+admin_bot   = Router()
+admin_dp.include_router(admin_bot)
 
 ADMIN_COMMANDS = [
     BotCommand(command="addcity",   description="Добавить городской канал"),
@@ -296,15 +296,15 @@ HELP_TEXT = (
     "/help — справка по командам\n"
 )
 
-@admin_rt.message(CommandStart())
+@admin_bot.message(CommandStart())
 async def cmd_start(msg: Message) -> None:
     await msg.answer("Привет! Я бот‑админ SetiNews. Напиши /help для списка команд.")
 
-@admin_rt.message(Command("help"))
+@admin_bot.message(Command("help"))
 async def cmd_help(msg: Message) -> None:
     await msg.answer(HELP_TEXT)
 
-@admin_rt.message(Command("addcity"))
+@admin_bot.message(Command("addcity"))
 async def cmd_addcity(msg: Message) -> None:
     if msg.chat.type != "private" or not await is_admin(msg.from_user.id):
         return
@@ -326,7 +326,7 @@ async def cmd_addcity(msg: Message) -> None:
         await DONORS.refresh()
     await msg.answer(f"✅ City added: {title} ({cid})")
 
-@admin_rt.message(Command("delcity"))
+@admin_bot.message(Command("delcity"))
 async def cmd_delcity(msg: Message) -> None:
     if msg.chat.type != "private" or not await is_admin(msg.from_user.id):
         return
@@ -345,7 +345,7 @@ async def cmd_delcity(msg: Message) -> None:
         await DONORS.refresh()
     await msg.answer("✅ City deleted")
 
-@admin_rt.message(Command("adddonor"))
+@admin_bot.message(Command("adddonor"))
 async def cmd_adddonor(msg: Message) -> None:
     if msg.chat.type != "private" or not await is_admin(msg.from_user.id):
         return
@@ -371,7 +371,7 @@ async def cmd_adddonor(msg: Message) -> None:
         await DONORS.refresh()
     await msg.answer(f"✅ Donor {title} added to {city.title}")
 
-@admin_rt.message(Command("deldonor"))
+@admin_bot.message(Command("deldonor"))
 async def cmd_deldonor(msg: Message) -> None:
     if msg.chat.type != "private" or not await is_admin(msg.from_user.id):
         return
@@ -390,7 +390,7 @@ async def cmd_deldonor(msg: Message) -> None:
         await DONORS.refresh()
     await msg.answer("✅ Donor deleted")
 
-@admin_rt.message(Command("setmask"))
+@admin_bot.message(Command("setmask"))
 async def cmd_setmask(msg: Message) -> None:
     if msg.chat.type != "private" or not await is_admin(msg.from_user.id):
         return
@@ -409,7 +409,7 @@ async def cmd_setmask(msg: Message) -> None:
         await s.commit()
     await msg.answer("✅ Mask updated")
 
-@admin_rt.message(Command("autopost"))
+@admin_bot.message(Command("autopost"))
 async def cmd_autopost(msg: Message) -> None:
     if msg.chat.type != "private" or not await is_admin(msg.from_user.id):
         return
@@ -428,7 +428,7 @@ async def cmd_autopost(msg: Message) -> None:
         await s.commit()
     await msg.answer(f"✅ Auto-mode {'enabled' if val else 'disabled'}")
 
-@admin_rt.message(Command("pending"))
+@admin_bot.message(Command("pending"))
 async def cmd_pending(msg: Message) -> None:
     if msg.chat.type != "private" or not await is_admin(msg.from_user.id):
         return
@@ -443,7 +443,7 @@ async def cmd_pending(msg: Message) -> None:
             preview = (p.processed_text or p.original_text)[:250]
             await msg.answer(f"ID {p.id}\n{preview}...")
 
-@admin_rt.message(Command("publish"))
+@admin_bot.message(Command("publish"))
 async def cmd_publish(msg: Message) -> None:
     if msg.chat.type != "private" or not await is_admin(msg.from_user.id):
         return
@@ -459,7 +459,7 @@ async def cmd_publish(msg: Message) -> None:
         await publish(s, p)
         await msg.answer("✅ Published")
 
-@admin_rt.message(Command("edit"))
+@admin_bot.message(Command("edit"))
 async def cmd_edit(msg: Message) -> None:
     if msg.chat.type != "private" or not await is_admin(msg.from_user.id):
         return
@@ -477,7 +477,7 @@ async def cmd_edit(msg: Message) -> None:
         res = await edit_post(s, post, new_text)
         await msg.answer(res)
 
-@admin_rt.message(Command("delete"))
+@admin_bot.message(Command("delete"))
 async def cmd_delete(msg: Message) -> None:
     if msg.chat.type != "private" or not await is_admin(msg.from_user.id):
         return
@@ -494,7 +494,7 @@ async def cmd_delete(msg: Message) -> None:
         res = await delete_post(s, post)
         await msg.answer(res)
 
-@admin_rt.message(Command("log"))
+@admin_bot.message(Command("log"))
 async def cmd_log(msg: Message) -> None:
     if msg.chat.type != "private" or not await is_admin(msg.from_user.id):
         return
@@ -514,7 +514,7 @@ async def cmd_log(msg: Message) -> None:
             t = (p.processed_text or p.original_text)[:200]
             await msg.answer(f"ID {p.id} | {p.created_at.strftime('%d.%m %H:%M')}\n{t}...")
 
-@admin_rt.message()
+@admin_bot.message()
 async def ignore_others(msg: Message): pass
 
 # ---------------------------------------------------------------------------
