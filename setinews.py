@@ -399,21 +399,17 @@ async def cmd_autopost(msg: Message):
 # ---------------------------------------------------------------------------
 # 9. RUN
 # ---------------------------------------------------------------------------
-def _start_bot(dp: Dispatcher, bot: Bot) -> None:
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.create_task(dp.start_polling(bot, handle_signals=False))
-    loop.run_forever()
-
-async def main() -> None:
+async def main():
     await init_db()
     await DONORS.refresh()
     await setup_bot_commands()
     await telethon_client.start()
-    Thread(target=_start_bot, args=(news_dp, news_bot), daemon=True).start()
-    Thread(target=_start_bot, args=(admin_dp, admin_bot), daemon=True).start()
-    while True:
-        await asyncio.sleep(3600)
+
+    # Оба диспетчера запускаются в общем asyncio loop
+    task1 = asyncio.create_task(news_dp.start_polling(news_bot, handle_signals=False))
+    task2 = asyncio.create_task(admin_dp.start_polling(admin_bot, handle_signals=False))
+
+    await asyncio.gather(task1, task2)
 
 def cli() -> None:
     import argparse
