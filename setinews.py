@@ -776,10 +776,11 @@ async def on_new_message(event: events.NewMessage.Event):
 
         # Применяем маску-regular (удаляет подписи/рекламу)
         if donor.mask_pattern:
-        try:
-            text = re.sub(donor.mask_pattern, '', text, flags=re.IGNORECASE).strip()
-        except re.error as e:
-            logger.warning(f"Некорректная маска у донора {donor.title}: {e}")
+            try:
+                text = re.sub(donor.mask_pattern, '', text, flags=re.IGNORECASE).strip()
+            except re.error as e:
+                logger.warning(f"Некорректная маска у донора {donor.title}: {e}")
+
 
         is_ad = await gigachat.detect_ads(text) or contains_ad(text)
         processed = None
